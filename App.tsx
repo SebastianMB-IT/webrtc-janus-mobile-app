@@ -81,10 +81,10 @@ function App(): JSX.Element {
 
   const [localMediaStream, setLocalMediaStream] = useState<MediaStream>();
   const [remoteMediaStream, setRemoteMediaStream] = useState<MediaStream>();
-  const [peerConnection, setPeerConnection] = useState<RTCPeerConnection>();
+  const peerConnection = useRef<RTCPeerConnection>();
   const [peerTrackAdded, setPeerTrackAdded] = useState<boolean>(false);
   const [addedLocalTracks, setAddedLocalTracks] = useState<boolean>(false);
-  const remoteCandidates = useRef<RTCIceCandidate[]>();
+  const remoteCandidates = useRef<RTCIceCandidate[]>([]);
 
   const [offerDescription, setOfferDescription] =
     useState<RTCSessionDescription>();
@@ -93,7 +93,7 @@ function App(): JSX.Element {
     // Add media stream track to peer connection
     if (localMediaStream) {
       localMediaStream.getTracks().forEach(track => {
-        peerConnection?.addTrack(track, localMediaStream);
+        peerConnection.current?.addTrack(track, localMediaStream);
       });
       setAddedLocalTracks(true);
     }
@@ -101,10 +101,10 @@ function App(): JSX.Element {
   }
 
   useEffect(() => {
-    if (localMediaStream && peerConnection) {
+    if (localMediaStream) {
       addStreamTracksToPeerConnection();
     }
-  }, [localMediaStream, peerConnection]);
+  }, [localMediaStream]);
 
   /**
    * Create an offer and be ready to send it
@@ -119,12 +119,12 @@ function App(): JSX.Element {
     };
 
     try {
-      if (peerConnection) {
-        const description = await peerConnection.createOffer(
+      if (peerConnection.current) {
+        const description = await peerConnection.current.createOffer(
           sessionConstraints,
         );
 
-        await peerConnection.setLocalDescription(description);
+        await peerConnection.current.setLocalDescription(description);
         return description;
       }
 
@@ -136,9 +136,7 @@ function App(): JSX.Element {
 
   async function callStart() {
     const description = await createOffer();
-    await peerConnection?.setLocalDescription(description);
-
-    console.log(description);
+    await peerConnection.current?.setLocalDescription(description);
 
     // Send the offerDescription to the other participant.
     ws.current?.send(
@@ -157,13 +155,13 @@ function App(): JSX.Element {
   }
 
   function processCandidates() {
-    if (remoteCandidates.current && peerConnection) {
+    if (remoteCandidates.current && peerConnection.current) {
       if (remoteCandidates.current.length < 1) {
         return;
       }
 
       remoteCandidates.current.map(candidate =>
-        peerConnection.addIceCandidate(candidate),
+        peerConnection.current?.addIceCandidate(candidate),
       );
       remoteCandidates.current = [];
     }
@@ -171,99 +169,93 @@ function App(): JSX.Element {
 
   function handleRemoteCandidate(iceCandidate: any) {
     try {
-      if (remoteCandidates.current && peerConnection) {
+      if (remoteCandidates.current && peerConnection.current) {
         iceCandidate = new RTCIceCandidate(iceCandidate);
 
-        if (peerConnection.remoteDescription == null) {
+        if (peerConnection.current.remoteDescription == null) {
           return remoteCandidates.current.push(iceCandidate);
         }
 
-        return peerConnection.addIceCandidate(iceCandidate);
+        return peerConnection.current.addIceCandidate(iceCandidate);
       }
     } catch (error) {
       console.warn(error);
     }
   }
 
+  /**
+   * Prepare the peer connection
+   */
+  async function createPeerConnection() {
+    let peerConstraints = {
+      iceServers: [
+        {
+          urls: 'stun:stun.l.google.com:19302',
+        },
+      ],
+    };
+
+    let newPeerConnection = new RTCPeerConnection(peerConstraints);
+
+    // Add listeners to the
+    newPeerConnection.addEventListener('connectionstatechange', event => {});
+    newPeerConnection.addEventListener('icecandidate', (event: any) => {
+      if (event?.candidate) {
+        handleRemoteCandidate(event.candidate);
+      }
+    });
+    newPeerConnection.addEventListener('icecandidateerror', event => {});
+    newPeerConnection.addEventListener('iceconnectionstatechange', event => {});
+    newPeerConnection.addEventListener('icegatheringstatechange', event => {});
+    newPeerConnection.addEventListener('negotiationneeded', event => {});
+    newPeerConnection.addEventListener('signalingstatechange', event => {});
+    newPeerConnection.addEventListener('track', event => {
+      setPeerTrackAdded(true);
+    });
+
+    return newPeerConnection;
+  }
+
+  /**
+   * Check the devices of the user
+   */
+  async function getDevices() {
+    try {
+      const devices: any = await mediaDevices.enumerateDevices();
+      let cameraCount = 0;
+
+      devices.map((device: any) => {
+        if (device.kind !== 'videoinput') {
+          return;
+        }
+
+        cameraCount = cameraCount + 1;
+      });
+    } catch (err) {
+      // Handle Error
+    }
+  }
+
+  /**
+   * Get the media of the user
+   */
+  async function getUserMedia() {
+    let mediaConstraints = {
+      audio: true,
+      video: false,
+    };
+
+    try {
+      const mediaStream = await mediaDevices.getUserMedia(mediaConstraints);
+
+      return mediaStream;
+    } catch (err) {
+      // Handle Error
+    }
+  }
+
   useEffect(() => {
     // The WebRTC useEffect
-
-    /**
-     * Check the devices of the user
-     */
-    async function getDevices() {
-      try {
-        const devices: any = await mediaDevices.enumerateDevices();
-        let cameraCount = 0;
-
-        devices.map((device: any) => {
-          if (device.kind !== 'videoinput') {
-            return;
-          }
-
-          cameraCount = cameraCount + 1;
-        });
-      } catch (err) {
-        // Handle Error
-      }
-    }
-
-    /**
-     * Prepare the peer connection
-     */
-    async function createPeerConnection() {
-      let peerConstraints = {
-        iceServers: [
-          {
-            urls: 'stun:stun.l.google.com:19302',
-          },
-        ],
-      };
-
-      let newPeerConnection = new RTCPeerConnection(peerConstraints);
-
-      // Add listeners to the
-      newPeerConnection.addEventListener('connectionstatechange', event => {});
-      newPeerConnection.addEventListener('icecandidate', (event: any) => {
-        if (event?.candidate) {
-          handleRemoteCandidate(event.candidate);
-        }
-      });
-      newPeerConnection.addEventListener('icecandidateerror', event => {});
-      newPeerConnection.addEventListener(
-        'iceconnectionstatechange',
-        event => {},
-      );
-      newPeerConnection.addEventListener(
-        'icegatheringstatechange',
-        event => {},
-      );
-      newPeerConnection.addEventListener('negotiationneeded', event => {});
-      newPeerConnection.addEventListener('signalingstatechange', event => {});
-      newPeerConnection.addEventListener('track', event => {
-        setPeerTrackAdded(true);
-      });
-
-      return newPeerConnection;
-    }
-
-    /**
-     * Get the media of the user
-     */
-    async function getUserMedia() {
-      let mediaConstraints = {
-        audio: true,
-        video: false,
-      };
-
-      try {
-        const mediaStream = await mediaDevices.getUserMedia(mediaConstraints);
-
-        return mediaStream;
-      } catch (err) {
-        // Handle Error
-      }
-    }
 
     async function initWebRTC() {
       // Check the devices
@@ -275,7 +267,7 @@ function App(): JSX.Element {
 
       // Create the peer connection
       const newPeerConnection = await createPeerConnection();
-      setPeerConnection(newPeerConnection);
+      peerConnection.current = newPeerConnection;
     }
 
     initWebRTC();
@@ -355,7 +347,7 @@ function App(): JSX.Element {
 
   useEffect(() => {
     if (pluginHandleId) {
-      // Attach the sip plugin to the janus session
+      // Register extension to the janus sip plugin
       register();
     }
   }, [pluginHandleId]);
@@ -409,25 +401,20 @@ function App(): JSX.Element {
 
             case 'incomingcall':
               console.log('Incoming call');
-
-              // TODO create answer
               if (jsep) {
-                webrtcIncomingOfferDescription.current = jsep;
+                // TODO create answer
               }
 
               break;
 
             case 'accepted':
-              console.log('Incoming call');
-
-              // TODO set remote description
-
               if (jsep) {
-                webrtcIncomingAnswerDescription.current = jsep;
+                // Set the remote answer as the remote description
+                peerConnection.current?.setRemoteDescription(jsep);
+                processCandidates();
               }
 
               break;
-
             default:
               break;
           }
@@ -465,7 +452,7 @@ function App(): JSX.Element {
           <Section title="Call An Extension">
             <View style={styles.col}>
               {localMediaStream && <Text>Local media stream: created</Text>}
-              {peerConnection && <Text>Peer connection: created</Text>}
+              {peerConnection.current && <Text>Peer connection: created</Text>}
               {peerTrackAdded && <Text>Peer track: added</Text>}
               {addedLocalTracks && <Text>Added local tracks</Text>}
               {offerDescription && <Text>Session offer: created</Text>}
