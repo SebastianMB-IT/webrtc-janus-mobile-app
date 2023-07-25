@@ -7,8 +7,7 @@
  * @format
  */
 
-import React, {useEffect, useRef, useState} from 'react';
-import type {PropsWithChildren} from 'react';
+import React, {useEffect, useRef, useState, type FC} from 'react';
 import {
   Button,
   SafeAreaView,
@@ -18,6 +17,8 @@ import {
   Text,
   useColorScheme,
   View,
+  Dimensions,
+  Pressable,
 } from 'react-native';
 
 import {
@@ -40,36 +41,6 @@ import {
   registerGlobals,
 } from 'react-native-webrtc';
 
-type SectionProps = PropsWithChildren<{
-  title: string;
-}>;
-
-function Section({children, title}: SectionProps): JSX.Element {
-  const isDarkMode = useColorScheme() === 'dark';
-  return (
-    <View style={styles.sectionContainer}>
-      <Text
-        style={[
-          styles.sectionTitle,
-          {
-            color: isDarkMode ? Colors.white : Colors.black,
-          },
-        ]}>
-        {title}
-      </Text>
-      <Text
-        style={[
-          styles.sectionDescription,
-          {
-            color: isDarkMode ? Colors.light : Colors.dark,
-          },
-        ]}>
-        {children}
-      </Text>
-    </View>
-  );
-}
-
 const EXTENSION: number = 212;
 
 function App(): JSX.Element {
@@ -79,36 +50,33 @@ function App(): JSX.Element {
     backgroundColor: isDarkMode ? Colors.darker : Colors.lighter,
   };
 
-  const [localMediaStream, setLocalMediaStream] = useState<MediaStream>();
-  const [remoteMediaStream, setRemoteMediaStream] = useState<MediaStream>();
-  const peerConnection = useRef<RTCPeerConnection>();
-  const [peerTrackAdded, setPeerTrackAdded] = useState<boolean>(false);
-  const [addedLocalTracks, setAddedLocalTracks] = useState<boolean>(false);
-  const remoteCandidates = useRef<RTCIceCandidate[]>([]);
+  const [refresh, setRefresh] = useState<number>(Math.random());
 
-  const [offerDescription, setOfferDescription] =
-    useState<RTCSessionDescription>();
+  const addedLocalTracks = useRef<boolean>(false);
+  const localMediaStream = useRef<MediaStream>();
+  const peerConnection = useRef<RTCPeerConnection>();
+  const remoteCandidates = useRef<RTCIceCandidate[]>([]);
+  const offerDescription = useRef<RTCSessionDescription>();
+
+  const sessionTransaction = useRef<string>('');
+  const sessionId = useRef<string>('');
+  const pluginAttachTransaction = useRef<string>('');
+  const pluginHandleId = useRef<string>('');
+  const ws = useRef<WebSocket>();
+  const registeredUsername = useRef<string>('');
+  const keepAliveInterval = useRef<ReturnType<typeof setInterval>>();
 
   function addStreamTracksToPeerConnection() {
     // Add media stream track to peer connection
-    if (localMediaStream) {
-      localMediaStream.getTracks().forEach(track => {
-        peerConnection.current?.addTrack(track, localMediaStream);
+    if (localMediaStream.current) {
+      localMediaStream.current.getTracks().forEach(track => {
+        peerConnection.current?.addTrack(track, localMediaStream.current!);
       });
-      setAddedLocalTracks(true);
+      addedLocalTracks.current = true;
     }
     return;
   }
 
-  useEffect(() => {
-    if (localMediaStream) {
-      addStreamTracksToPeerConnection();
-    }
-  }, [localMediaStream]);
-
-  /**
-   * Create an offer and be ready to send it
-   */
   async function createOffer() {
     let sessionConstraints = {
       mandatory: {
@@ -125,10 +93,12 @@ function App(): JSX.Element {
         );
 
         await peerConnection.current.setLocalDescription(description);
+
+        // Save offer description
+        offerDescription.current = description;
+
         return description;
       }
-
-      // Send the offerDescription to the other participant.
     } catch (err) {
       // Handle Errors
     }
@@ -138,12 +108,12 @@ function App(): JSX.Element {
     const description = await createOffer();
     await peerConnection.current?.setLocalDescription(description);
 
-    // Send the offerDescription to the other participant.
+    // Send the offerDescription to the other participant
     ws.current?.send(
       JSON.stringify({
         janus: 'message',
-        session_id: sessionId,
-        handle_id: pluginHandleId,
+        session_id: sessionId.current,
+        handle_id: pluginHandleId.current,
         transaction: generateTransactionId(12),
         body: {
           request: 'call',
@@ -183,9 +153,6 @@ function App(): JSX.Element {
     }
   }
 
-  /**
-   * Prepare the peer connection
-   */
   async function createPeerConnection() {
     let peerConstraints = {
       iceServers: [
@@ -209,16 +176,11 @@ function App(): JSX.Element {
     newPeerConnection.addEventListener('icegatheringstatechange', event => {});
     newPeerConnection.addEventListener('negotiationneeded', event => {});
     newPeerConnection.addEventListener('signalingstatechange', event => {});
-    newPeerConnection.addEventListener('track', event => {
-      setPeerTrackAdded(true);
-    });
+    newPeerConnection.addEventListener('track', event => {});
 
     return newPeerConnection;
   }
 
-  /**
-   * Check the devices of the user
-   */
   async function getDevices() {
     try {
       const devices: any = await mediaDevices.enumerateDevices();
@@ -236,9 +198,6 @@ function App(): JSX.Element {
     }
   }
 
-  /**
-   * Get the media of the user
-   */
   async function getUserMedia() {
     let mediaConstraints = {
       audio: true,
@@ -254,25 +213,6 @@ function App(): JSX.Element {
     }
   }
 
-  useEffect(() => {
-    // The WebRTC useEffect
-
-    async function initWebRTC() {
-      // Check the devices
-      getDevices();
-      // Get the user media
-      const newLocalMediaStream = await getUserMedia();
-
-      setLocalMediaStream(newLocalMediaStream);
-
-      // Create the peer connection
-      const newPeerConnection = await createPeerConnection();
-      peerConnection.current = newPeerConnection;
-    }
-
-    initWebRTC();
-  }, []);
-
   function generateTransactionId(length: number) {
     const characters =
       'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -286,23 +226,14 @@ function App(): JSX.Element {
     return result;
   }
 
-  const sessionTransaction = useRef<string>('');
-  const [sessionId, setSessionId] = useState<string>('');
-  const pluginAttachTransaction = useRef<string>('');
-  const [pluginHandleId, setPluginHandleId] = useState<string>('');
-  const ws = useRef<WebSocket>();
-  const [registeredUsername, setRegisteredUsername] = useState<string>('');
-
-  const webrtcIncomingOfferDescription = useRef<RTCSessionDescription>();
-
   function register() {
     try {
-      if (ws?.current && sessionId && pluginHandleId) {
+      if (ws?.current && sessionId.current && pluginHandleId.current) {
         ws.current.send(
           JSON.stringify({
             janus: 'message',
-            session_id: sessionId,
-            handle_id: pluginHandleId,
+            session_id: sessionId.current,
+            handle_id: pluginHandleId.current,
             transaction: generateTransactionId(12),
             body: {
               request: 'register',
@@ -323,14 +254,14 @@ function App(): JSX.Element {
   }
 
   function attachSipPlugin() {
-    if (ws.current && sessionId) {
+    if (ws.current && sessionId.current) {
       // Attach the sip plugin
       pluginAttachTransaction.current = generateTransactionId(12);
 
       ws.current.send(
         JSON.stringify({
           janus: 'attach',
-          session_id: sessionId, // NEW!
+          session_id: sessionId.current, // NEW!
           plugin: 'janus.plugin.sip',
           transaction: pluginAttachTransaction.current,
         }),
@@ -338,19 +269,39 @@ function App(): JSX.Element {
     }
   }
 
-  useEffect(() => {
-    if (sessionId) {
-      // Attach the sip plugin to the janus session
-      attachSipPlugin();
-    }
-  }, [sessionId]);
+  function startKeepAliveInterval() {
+    keepAliveInterval.current = setInterval(() => {
+      ws.current?.send(
+        JSON.stringify({
+          janus: 'keepalive',
+          session_id: sessionId.current,
+          transaction: generateTransactionId(12),
+        }),
+      );
+    }, 1000 * 50);
+  }
 
   useEffect(() => {
-    if (pluginHandleId) {
-      // Register extension to the janus sip plugin
-      register();
+    // The WebRTC useEffect
+
+    async function initWebRTC() {
+      // Check the devices
+      getDevices();
+
+      // Get the user media
+      localMediaStream.current = await getUserMedia();
+
+      // Create the peer connection
+      peerConnection.current = await createPeerConnection();
+
+      // Add tracks to peer connection
+      addStreamTracksToPeerConnection();
     }
-  }, [pluginHandleId]);
+
+    initWebRTC();
+  }, []);
+
+  const [incomingCall, setIncomingCall] = useState<boolean>(false);
 
   useEffect(() => {
     // Manage WebSocket
@@ -376,17 +327,21 @@ function App(): JSX.Element {
         const pluginData = data?.plugindata?.data?.result;
         const jsep = data?.jsep;
 
-        // Handle messages for setup (janus sessionid and pluginhandlerid)
+        // Handle messages for setup (janus sessionid and pluginHandlerId)
         if (data.janus === 'success') {
           // Handle session id message
           if (data.transaction === sessionTransaction.current) {
             // Save the session id
-            setSessionId(data.data.id);
+            sessionId.current = data.data.id;
+            // Attach the janus sip plugin to the session
+            attachSipPlugin();
           }
           // Handle plugin handle id message
           if (data.transaction === pluginAttachTransaction.current) {
             // Save the handle id
-            setPluginHandleId(data.data.id);
+            pluginHandleId.current = data.data.id;
+            // Register to the sip plugin using the sip extension
+            register();
           }
         }
 
@@ -396,13 +351,19 @@ function App(): JSX.Element {
         if (event) {
           switch (event) {
             case 'registered':
-              setRegisteredUsername(pluginData.username);
+              registeredUsername.current = pluginData.username;
+              startKeepAliveInterval();
+
+              setRefresh(Math.random());
+
               break;
 
             case 'incomingcall':
-              console.log('Incoming call');
               if (jsep) {
-                // TODO create answer
+                // Set the remote offer as the remote description
+                peerConnection.current?.setRemoteDescription(jsep);
+
+                setIncomingCall(true);
               }
 
               break;
@@ -411,10 +372,17 @@ function App(): JSX.Element {
               if (jsep) {
                 // Set the remote answer as the remote description
                 peerConnection.current?.setRemoteDescription(jsep);
+
                 processCandidates();
               }
 
               break;
+
+            case 'hangup':
+              setIncomingCall(false);
+
+              break;
+
             default:
               break;
           }
@@ -433,7 +401,39 @@ function App(): JSX.Element {
     } catch (error) {
       console.warn(error);
     }
+
+    return () => {
+      clearInterval(keepAliveInterval.current);
+    };
   }, []);
+
+  async function answer() {
+    if (peerConnection.current) {
+      // Create the webrtc answer
+      const answerDescription = await peerConnection.current.createAnswer();
+      // Set the answer description as the local description
+      await peerConnection.current.setLocalDescription(answerDescription);
+
+      // Process ice candidates
+      processCandidates();
+
+      // Send the offerDescription to the other participant.
+      ws.current?.send(
+        JSON.stringify({
+          janus: 'message',
+          session_id: sessionId.current,
+          handle_id: pluginHandleId.current,
+          transaction: generateTransactionId(12),
+          body: {
+            request: 'accept',
+          },
+          jsep: answerDescription,
+        }),
+      );
+    }
+  }
+
+  function hangup() {}
 
   return (
     <SafeAreaView style={backgroundStyle}>
@@ -449,34 +449,53 @@ function App(): JSX.Element {
           style={{
             backgroundColor: isDarkMode ? Colors.black : Colors.white,
           }}>
-          <Section title="Call An Extension">
-            <View style={styles.col}>
-              {localMediaStream && <Text>Local media stream: created</Text>}
-              {peerConnection.current && <Text>Peer connection: created</Text>}
-              {peerTrackAdded && <Text>Peer track: added</Text>}
-              {addedLocalTracks && <Text>Added local tracks</Text>}
-              {offerDescription && <Text>Session offer: created</Text>}
-              {sessionId && <Text>Janus session ID is: {sessionId}</Text>}
-              {pluginHandleId && (
-                <Text>Janus plugin handle ID is: {pluginHandleId}</Text>
-              )}
-              {registeredUsername && (
-                <Text>Registered username is: {registeredUsername}</Text>
-              )}
-              <Button
-                onPress={() => callStart()}
-                title={`call: ${EXTENSION}`}
-              />
-            </View>
-          </Section>
-          <Section title="Learn More">
-            Read the docs to discover what to do next:
-          </Section>
+          <View style={styles.col}>
+            {localMediaStream.current && (
+              <Text>Local media stream: created</Text>
+            )}
+            {peerConnection.current && <Text>Peer connection: created</Text>}
+            {addedLocalTracks.current && <Text>Local tracks: added</Text>}
+            {offerDescription.current && <Text>Session offer: created</Text>}
+            {sessionId.current && (
+              <Text>Janus session ID is: {sessionId.current}</Text>
+            )}
+            {pluginHandleId.current && (
+              <Text>Janus plugin handle ID is: {pluginHandleId.current}</Text>
+            )}
+            {registeredUsername.current && (
+              <Text>Registered username is: {registeredUsername.current}</Text>
+            )}
+            <Button onPress={() => callStart()} title={`call: ${EXTENSION}`} />
+          </View>
           <LearnMoreLinks />
         </View>
       </ScrollView>
+      {incomingCall && (
+        <MobilePhoneIsland answerCallback={answer} hangupCallback={hangup} />
+      )}
     </SafeAreaView>
   );
+}
+
+const MobilePhoneIsland: FC<MobilePhoneIslandProps> = ({
+  answerCallback,
+  hangupCallback,
+}) => {
+  return (
+    <View style={styles.mpi}>
+      <Pressable onPress={answerCallback}>
+        <Text style={styles.mpiAnswer}>Answer</Text>
+      </Pressable>
+      <Pressable onPress={hangupCallback}>
+        <Text style={styles.mpiHangup}>Hangup</Text>
+      </Pressable>
+    </View>
+  );
+};
+
+interface MobilePhoneIslandProps {
+  answerCallback: () => void;
+  hangupCallback: () => void;
 }
 
 const styles = StyleSheet.create({
@@ -499,6 +518,37 @@ const styles = StyleSheet.create({
   col: {
     display: 'flex',
     flexDirection: 'column',
+    padding: 25,
+    rowGap: 15,
+  },
+  mpi: {
+    display: 'flex',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    columnGap: 25,
+    padding: 40,
+    position: 'absolute',
+    bottom: 0,
+    width: Dimensions.get('window').width,
+    backgroundColor: 'black',
+    borderTopLeftRadius: 50,
+    borderTopRightRadius: 50,
+  },
+  mpiAnswer: {
+    color: 'white',
+    backgroundColor: 'green',
+    borderRadius: 99,
+    padding: 20,
+    fontWeight: '600',
+    fontSize: 16,
+  },
+  mpiHangup: {
+    color: 'white',
+    backgroundColor: 'red',
+    borderRadius: 99,
+    padding: 20,
+    fontWeight: '600',
+    fontSize: 16,
   },
 });
 
