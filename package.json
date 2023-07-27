@@ -1,5 +1,5 @@
 {
-  "name": "nethvoice_cti",
+  "name": "nethvoice.cti.test",
   "version": "0.0.1",
   "private": true,
   "scripts": {
@@ -10,6 +10,8 @@
     "test": "jest"
   },
   "dependencies": {
+    "@react-native-firebase/app": "^18.3.0",
+    "@react-native-firebase/messaging": "^18.3.0",
     "react": "18.2.0",
     "react-native": "0.72.3",
     "react-native-webrtc": "^111.0.3"

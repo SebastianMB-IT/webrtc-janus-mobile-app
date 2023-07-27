@@ -1,4 +1,4 @@
-package com.nethvoice_cti;
+package com.nethvoice.cti.test;
 
 import com.facebook.react.ReactActivity;
 import com.facebook.react.ReactActivityDelegate;

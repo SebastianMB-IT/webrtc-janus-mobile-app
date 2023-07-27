@@ -19,7 +19,11 @@ import {
   View,
   Dimensions,
   Pressable,
+  PermissionsAndroid,
+  Alert,
 } from 'react-native';
+
+import messaging from '@react-native-firebase/messaging';
 
 import {
   Colors,
@@ -42,6 +46,7 @@ import {
 } from 'react-native-webrtc';
 
 const EXTENSION: number = 212;
+PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
 
 function App(): JSX.Element {
   const isDarkMode = useColorScheme() === 'dark';
@@ -237,17 +242,17 @@ function App(): JSX.Element {
             transaction: generateTransactionId(12),
             body: {
               request: 'register',
-              username: 'sip:211@127.0.0.1',
+              username: 'sip:91211@127.0.0.1',
               display_name: 'foo 1',
-              secret: '0081a9189671e8c3d1ad8b025f92403da',
-              proxy: 'sip:127.0.0.1:5060',
-              outbound_proxy: 'sip:127.0.0.1:5060',
+              secret: 'cc4eb16e3f4c9bd588328846dd3535d5',
               sips: false,
               refresh: false,
+              register_ttl: 3600,
             },
           }),
         );
       }
+      console.log('aa');
     } catch (error) {
       console.log(error);
     }
@@ -348,6 +353,9 @@ function App(): JSX.Element {
         // Handle webrtc related messages
         const event: string | null = pluginData?.event;
 
+        console.log('pluginData');
+        console.log(pluginData);
+
         if (event) {
           switch (event) {
             case 'registered':
@@ -405,6 +413,17 @@ function App(): JSX.Element {
     return () => {
       clearInterval(keepAliveInterval.current);
     };
+  }, []);
+
+  useEffect(() => {
+    // Get and pring the FCM token in console
+    async function getFCMToken() {
+      const token = await messaging().getToken();
+      console.log('FCM TOKEN');
+      console.log(token);
+    }
+
+    getFCMToken();
   }, []);
 
   async function answer() {

@@ -64,3 +64,6 @@ yarn-error.log
 
 # testing
 /coverage
+
+# Ignore firebase google-service.json
+android/app/google-services.json
